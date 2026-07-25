@@ -109,7 +109,7 @@ JSON:"""
             
         intent = plan.get("intent", "EDA")
         cols = plan.get("columns", [])
-        num_clusters = plan.get("num_clusters", 3)
+        num_clusters = plan.get("num_clusters") or 3
         cust_id = plan.get("customer_id")
         q_type = plan.get("question_type", "global")
         
