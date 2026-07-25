@@ -1,0 +1,49 @@
+Customer Segmentation & Personalization Agent for Retail Banking
+================================================================
+
+This repository contains an AI-powered agentic system that automates customer segmentation, exploratory data analysis (EDA), segment profiling, explainability, and personalization for retail banking.
+
+Prerequisites
+-------------
+1. Python 3.10 or higher.
+2. Ollama installed locally (https://ollama.com).
+   Make sure to pull the Llama 3.2 (3B) model:
+   $ ollama pull llama3.2
+
+Local Setup Instructions
+------------------------
+1. Clone the repository and navigate to the project directory:
+   $ cd "bank-segmentation-agent"
+
+2. Setup the Python Virtual Environment and Install Dependencies:
+   On Windows, you can automate this using the provided PowerShell script:
+   $ powershell -ExecutionPolicy Bypass -File .\setup.ps1
+
+   Alternatively, execute manually:
+   $ python -m venv --system-site-packages .venv
+   $ .venv\Scripts\activate
+   $ python -m pip install --upgrade pip
+   $ python -m pip install -r requirements.txt
+
+3. Generate the Synthetic Dataset:
+   Run the data generator to create `banking_customers.csv` containing 5,000 customer records:
+   $ python data_generator.py
+
+Verifying the Installation
+--------------------------
+To ensure that everything is installed correctly and the core analytical engines are functioning, run the verification scripts:
+
+1. Verify Stage 1 (Data Integrity & Schema Check):
+   $ python verify_stage1.py
+   (Expected output: Verification of row counts, bounds checks, schema matches, and a sample data preview.)
+
+2. Verify Stage 2 (Core Analytical Tools Check):
+   $ python verify_tools.py
+   (Expected output: Imports and runs the EDA, Feature Engineering, K-Means Clustering, Decision Tree Explainability, and Recommendation modules on the dataset, asserting logical correctness.)
+
+Future Stages (API & Frontend Web App)
+--------------------------------------
+Once implementation continues, the project will run as a complete web application:
+- Backend: A FastAPI server served at http://localhost:8000.
+- Frontend: A React + Vite Single Page Application.
+More details on how to build and launch the server will be appended as those components are implemented.

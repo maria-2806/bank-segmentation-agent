@@ -1,0 +1,45 @@
+# Virtual Environments
+.venv/
+venv/
+ENV/
+
+# Python Cache & Compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local Datasets (Large files generated dynamically)
+*.csv
+banking_customers.csv
+segmented_customers.csv
+
+# Environment & Private Configuration
+.env
+.env*.local
+.env.development
+.env.production
+
+# Node / Frontend Build
+node_modules/
+dist/
+dist-ssr/
+frontend/node_modules/
+frontend/dist/
+*.log
+
+# Editor Configurations
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.sublime-project
+*.sublime-workspace
+
+# OS Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini

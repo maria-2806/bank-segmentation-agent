@@ -1,0 +1,9 @@
+# Customer Segmentation & Personalization Agent Backend Package
+# Expose key modules for clean imports
+
+from agent_backend.eda_tool import run_full_eda
+from agent_backend.feature_engineering_tool import get_preprocessed_features, FeaturePreprocessingPipeline
+from agent_backend.segmentation_tool import run_kmeans_clustering, run_dbscan_clustering
+from agent_backend.explainability_tool import fit_explainability_tree, extract_decision_rules, explain_single_customer, get_cluster_profiles
+from agent_backend.recommendation_tool import recommend_products_for_customer, calculate_transition_steps
+from agent_backend.agent_orchestrator import AgentOrchestrator
