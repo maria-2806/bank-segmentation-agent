@@ -66,8 +66,8 @@ def run_verification():
     cust_explanation = explain_single_customer(single_cust, pipeline, dt_model, feat_names)
     assert cust_explanation['assigned_segment'] == single_cust['segment_id'].values[0], "Assigned segment in trace does not match"
     print("Explainability verified. Top features driving classification:")
-    for imp in importances[:3]:
-        print(f"  {imp['feature']}: {imp['importance']:.4f}")
+    for feat, val in list(importances.items())[:3]:
+        print(f"  {feat}: {val:.4f}")
     print(f"Global decision tree rules extracted for {len(rules)} segments.")
     
     # 5. Verify Recommendations

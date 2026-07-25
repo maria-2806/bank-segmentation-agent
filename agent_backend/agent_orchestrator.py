@@ -15,7 +15,7 @@ class AgentOrchestrator:
     def __init__(self, ollama_host="http://localhost:11434", model_name="llama3.2"):
         self.ollama_host = ollama_host.rstrip('/')
         self.model_name = model_name
-        self.client = httpx.Client(timeout=60.0) # Local LLM can be slow
+        self.client = httpx.Client(timeout=300.0) # 5 minute timeout for local CPU inference
         
     def check_ollama_status(self):
         try:
@@ -107,12 +107,33 @@ JSON:"""
         except Exception as e:
             raise RuntimeError(f"Ollama Connection Failed. Please ensure Ollama is running and has model {self.model_name}. Details: {e}")
             
-        intent = plan.get("intent", "EDA")
+        raw_intent = str(plan.get("intent", "EDA")).upper()
+        if "RECOMMEND" in raw_intent:
+            intent = "RECOMMEND"
+        elif "EXPLAIN" in raw_intent:
+            intent = "EXPLAIN"
+        elif "SEGMENT" in raw_intent:
+            intent = "SEGMENTATION"
+        else:
+            intent = "EDA"
+
         cols = plan.get("columns", [])
         num_clusters = plan.get("num_clusters") or 3
         cust_id = plan.get("customer_id")
         q_type = plan.get("question_type", "global")
         
+        # Force deterministic regex detection of customer ID and intent if present in query string
+        import re
+        match = re.search(r'CUST\d+', query.upper())
+        if match:
+            cust_id = match.group(0)
+            q_type = "single_customer"
+            q_low = query.lower()
+            if any(k in q_low for k in ["recommend", "product", "offer", "suggest", "proposal", "card"]):
+                intent = "RECOMMEND"
+            elif any(k in q_low for k in ["explain", "why", "detail", "profile", "reason", "trace"]):
+                intent = "EXPLAIN"
+            
         # Ensure we have column defaults
         if not cols:
             cols = ['account_balance', 'transaction_frequency', 'annual_income', 'credit_score', 'tenure_months']
@@ -188,25 +209,20 @@ Write a concise, premium dashboard report outlining customer distribution, data 
             
             thoughts.append("Fitting Decision Tree Explainability model to map cluster decision rules...")
             dt_model, importances = fit_explainability_tree(X, seg_results['labels'], feat_names)
-            rules = extract_decision_rules(dt_model, feat_names)
+            scaler = pipeline.named_steps['scaler'] if hasattr(pipeline, 'named_steps') and 'scaler' in pipeline.named_steps else None
+            rules = extract_decision_rules(dt_model, feat_names, scaler=scaler)
             profiles = get_cluster_profiles(seg_results['df'])
             
             # Save segmented dataset to disk
             seg_results['df'].to_csv("segmented_customers.csv", index=False)
             thoughts.append("Saved segmented customer records to 'segmented_customers.csv'.")
             
-            # Summarize segments via LLM
+            # Summarize segments via LLM concisely for ultra-fast CPU inference
             summary_prompt = f"""You are a Retail Banking Marketing Strategist.
-We just segmented our customer base into {num_clusters} groups based on these variables: {', '.join(cols)}.
-Here are the profiles (average feature values) of the discovered clusters:
-{json.dumps(profiles, indent=2)}
+We segmented customers into {num_clusters} groups based on: {', '.join(cols)}.
+Cluster profiles: {json.dumps(profiles)}
 
-Here are the mathematical decision boundaries (Decision Tree rules) for each cluster:
-{json.dumps(rules, indent=2)}
-
-Create a compelling name/persona and a detailed description for each segment. 
-Profile their typical age, balance, transaction frequency, and credit behaviors.
-Present this report in a beautifully formatted table or list.
+For each segment, give a persona name and 2 concise bullet points summarizing their key characteristics. Keep the output brief and direct.
 """
             resp_text = self._call_ollama(summary_prompt)
             
@@ -235,7 +251,7 @@ Present this report in a beautifully formatted table or list.
             # Perform explainability tasks
             if q_type == "single_customer" and cust_id:
                 thoughts.append(f"Looking up customer record for {cust_id}...")
-                cust_row = df_seg[df_seg['customer_id'] == cust_id]
+                cust_row = df_seg[df_seg['customer_id'].astype(str).str.upper() == str(cust_id).upper()]
                 if cust_row.empty:
                     return {
                         'thoughts': thoughts,
@@ -319,7 +335,7 @@ For each segment, write a list of logical criteria (e.g., "Priority Segment: Cus
             
             if q_type == "single_customer" and cust_id:
                 thoughts.append(f"Retrieving profile and computing cross-sell targets for {cust_id}...")
-                cust_row = df_seg[df_seg['customer_id'] == cust_id]
+                cust_row = df_seg[df_seg['customer_id'].astype(str).str.upper() == str(cust_id).upper()]
                 if cust_row.empty:
                     return {
                         'thoughts': thoughts,
@@ -358,6 +374,9 @@ Make the email sound extremely premium, supportive, and provide actionable tips 
                     'intent': 'RECOMMEND_SINGLE',
                     'data': {
                         'customer_id': cust_id,
+                        'profile': row_data.to_dict(),
+                        'assigned_segment': segment,
+                        'explanation_path': [],
                         'recommendations': recs,
                         'transition_steps': transition_steps
                     }
