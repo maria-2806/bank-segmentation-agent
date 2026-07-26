@@ -2,6 +2,88 @@ import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.metrics import silhouette_score
+from scipy.optimize import linear_sum_assignment
+
+# Canonical segment IDs. recommendation_tool.py and the orchestrator rely on these
+# exact meanings, so raw K-Means indices MUST be remapped onto them before use.
+CANONICAL_SEGMENTS = {
+    0: "Priority",
+    1: "Regular",
+    2: "Dormant",
+    3: "Overleveraged",
+    4: "Wealth/Investor",
+}
+
+# Archetype fingerprints expressed as weights over z-scored cluster-mean features.
+# "Regular" is handled separately (the cluster closest to the global average).
+_ARCHETYPE_SIGNATURES = {
+    "Priority":        {"account_balance": 1.0, "transaction_frequency": 1.0,
+                        "annual_income": 0.8, "credit_score": 0.8,
+                        "online_login_frequency": 0.5},
+    "Dormant":         {"account_balance": -0.8, "transaction_frequency": -1.2,
+                        "online_login_frequency": -1.0, "annual_income": -0.4},
+    "Overleveraged":   {"debt_to_income": 1.2, "credit_card_utilization": 1.2,
+                        "account_balance": -0.6, "transaction_frequency": 0.4},
+    "Wealth/Investor": {"account_balance": 1.0, "annual_income": 1.0,
+                        "investment_balance": 1.4, "transaction_frequency": -0.5},
+}
+
+
+def assign_semantic_labels(df_result, num_clusters, segment_col='segment_id'):
+    """
+    Remaps arbitrary K-Means cluster indices onto canonical, meaningful segment IDs
+    by matching each cluster's average profile to a banking persona.
+
+    - When num_clusters == 5, solves an optimal one-to-one assignment (Hungarian)
+      so every canonical persona is used exactly once.
+    - Otherwise, falls back to ranking clusters by a composite value score, so
+      ID 0 is always the highest-value ("Priority-like") cluster.
+
+    Returns (relabelled_df, mapping) where mapping is {raw_cluster_id: canonical_id}.
+    """
+    feats = ["account_balance", "transaction_frequency", "annual_income", "credit_score",
+             "debt_to_income", "credit_card_utilization", "online_login_frequency",
+             "investment_balance"]
+    feats = [f for f in feats if f in df_result.columns]
+
+    prof = df_result.groupby(segment_col)[feats].mean()
+    raw_ids = list(prof.index)
+
+    # z-score each feature ACROSS clusters so personas are compared on relative standing
+    mu = prof.mean(axis=0)
+    sd = prof.std(axis=0).replace(0, 1.0)
+    z = (prof - mu) / sd
+
+    if num_clusters != 5:
+        # Fallback: rank by value; guarantees unique IDs 0..k-1, Priority-like = 0
+        value_w = {"account_balance": 1.0, "annual_income": 1.0, "transaction_frequency": 0.7,
+                   "credit_score": 0.7, "investment_balance": 0.7,
+                   "debt_to_income": -0.8, "credit_card_utilization": -0.6}
+        score = sum(z[f] * w for f, w in value_w.items() if f in z.columns)
+        order = score.sort_values(ascending=False).index.tolist()
+        mapping = {raw: new for new, raw in enumerate(order)}
+    else:
+        archetype_order = ["Priority", "Regular", "Dormant", "Overleveraged", "Wealth/Investor"]
+        S = np.zeros((5, 5))
+        for i, raw in enumerate(raw_ids):
+            zc = z.loc[raw].values
+            for j, arch in enumerate(archetype_order):
+                if arch == "Regular":
+                    S[i, j] = -float(np.sqrt((zc ** 2).sum()))  # nearest the global mean
+                else:
+                    sig = _ARCHETYPE_SIGNATURES[arch]
+                    vec = np.array([sig.get(f, 0.0) for f in z.columns])
+                    norm = np.linalg.norm(vec) or 1.0
+                    S[i, j] = float(np.dot(zc, vec) / norm)
+        # maximise total similarity -> minimise negative similarity
+        row_ind, col_ind = linear_sum_assignment(-S)
+        mapping = {raw_ids[i]: int(j) for i, j in zip(row_ind, col_ind)}
+
+    df_out = df_result.copy()
+    df_out[segment_col] = df_out[segment_col].map(mapping).astype(int)
+    df_out['segment_name'] = df_out[segment_col].map(
+        lambda k: CANONICAL_SEGMENTS.get(k, f"Segment {k}"))
+    return df_out, mapping
 
 def run_kmeans_clustering(df_engineered, X, features_list, num_clusters=3, seed=42):
     """
@@ -49,17 +131,27 @@ def run_kmeans_clustering(df_engineered, X, features_list, num_clusters=3, seed=
     else:
         df_result['is_boundary'] = 0
         
-    # Calculate cluster sizes
+    # Remap arbitrary K-Means indices -> canonical semantic segment IDs.
+    # Everything downstream (recommendations, aggregation, conversion) depends on this.
+    df_result, label_map = assign_semantic_labels(df_result, num_clusters)
+    labels = df_result['segment_id'].to_numpy()
+    outlier_thresholds_by_cluster = {
+        int(label_map.get(c, c)): v for c, v in outlier_thresholds_by_cluster.items()
+    }
+
+    # Calculate cluster sizes (keyed by canonical segment ID)
     cluster_counts = df_result['segment_id'].value_counts().to_dict()
     sizes = {int(k): int(v) for k, v in cluster_counts.items()}
-    
+
     return {
         'df': df_result,
         'model': kmeans,
         'labels': labels,
         'silhouette_score': sil_score,
         'cluster_sizes': sizes,
-        'outlier_thresholds': outlier_thresholds_by_cluster
+        'outlier_thresholds': outlier_thresholds_by_cluster,
+        'label_map': label_map,
+        'segment_names': CANONICAL_SEGMENTS
     }
 
 def run_dbscan_clustering(df_engineered, X, eps=0.5, min_samples=5):
